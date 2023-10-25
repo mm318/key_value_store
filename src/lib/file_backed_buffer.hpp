@@ -8,14 +8,17 @@
 class FileBackedBuffer
 {
 public:
-    FileBackedBuffer(const char * filename);
+  FileBackedBuffer(const char * filename);
+  ~FileBackedBuffer();
 
-    uint8_t * alloc(const size_t alloc_size);
+  uint8_t * alloc(const size_t alloc_size);
 
-    void free(uint8_t * pointer);
+  void free(uint8_t * pointer);
 
 private:
-    void * m_base;
+  int m_fd;
+  int m_db_size;
+  void * m_base;
 };
 
 #endif  // _FILE_BACKED_BUFFER_HPP_
