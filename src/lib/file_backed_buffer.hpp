@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 using FileByteOffset = size_t;
 
@@ -16,8 +17,31 @@ public:
   ~FileBackedBuffer();
 
   uint8_t * alloc(const size_t alloc_size);
-
   void free(uint8_t * pointer);
+
+  class const_iterator
+  {
+  public:
+    const_iterator(const FileBackedBuffer * parent, const FileByteOffset offset) : m_parent(parent), m_offset(offset) {}
+
+    std::pair<uint8_t *, size_t> operator*();
+
+    const_iterator operator++();
+    const_iterator operator--();
+
+    bool operator==(const const_iterator & other) const { return other.m_parent == m_parent && other.m_offset == m_offset; }
+    bool operator!=(const const_iterator & other) const { return other.m_parent != m_parent || other.m_offset != m_offset; }
+
+  private:
+    const FileBackedBuffer * m_parent;
+    FileByteOffset m_offset;
+  };
+
+  const_iterator begin_allocated() const { return const_iterator(this, m_header->next_allocated_block); }
+  const_iterator end_allocated() const { return const_iterator(this, NULL_OFFSET); }
+
+  const_iterator begin_free() const { return const_iterator(this, m_header->next_free_block); }
+  const_iterator end_free() const { return const_iterator(this, NULL_OFFSET); }
 
 private:
   struct BufferHeader {

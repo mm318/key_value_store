@@ -67,7 +67,7 @@ FileBackedBuffer::FileBackedBuffer(const char * filename) : m_fd(-1), m_base(nul
     m_header->next_free_block = sizeof(BufferHeader);
     m_header->next_allocated_block = NULL_OFFSET;
 
-    Block * new_block = reinterpret_cast<Block*>(to_pointer(m_header->next_free_block));
+    Block * new_block = reinterpret_cast<Block *>(to_pointer(m_header->next_free_block));
     new_block->data_size = m_db_size - sizeof(BufferHeader) - sizeof(Block);
     new_block->prev_block = NULL_OFFSET;
     new_block->next_block = NULL_OFFSET;
@@ -87,13 +87,13 @@ FileBackedBuffer::~FileBackedBuffer()
 uint8_t * FileBackedBuffer::alloc(const size_t alloc_size)
 {
   FileByteOffset curr_free_block = m_header->next_free_block;
-  while(curr_free_block != NULL_OFFSET) {
-    Block * curr_block = reinterpret_cast<Block*>(to_pointer(curr_free_block));
+  while (curr_free_block != NULL_OFFSET) {
+    Block * curr_block = reinterpret_cast<Block *>(to_pointer(curr_free_block));
     if (curr_block->data_size >= alloc_size) {
       remove_block_from_list(free_list(), curr_block);
 
       if (curr_block->data_size >= alloc_size + sizeof(Block) + 100 /* only 100 bytes oversized do we split the block, it's a heurestic */) {
-        Block * new_block = reinterpret_cast<Block*>(curr_block->data + alloc_size);
+        Block * new_block = reinterpret_cast<Block *>(curr_block->data + alloc_size);
         new_block->data_size = curr_block->data_size - alloc_size - sizeof(Block);
         insert_block_to_list(free_list(), new_block);
         curr_block->data_size = alloc_size;
@@ -112,7 +112,7 @@ uint8_t * FileBackedBuffer::alloc(const size_t alloc_size)
 
 void FileBackedBuffer::free(uint8_t * pointer)
 {
-  Block * block = reinterpret_cast<Block*>(pointer - sizeof(Block));
+  Block * block = reinterpret_cast<Block *>(pointer - sizeof(Block));
   remove_block_from_list(allocated_list(), block);
   insert_block_to_list(free_list(), block);
 }
@@ -120,14 +120,14 @@ void FileBackedBuffer::free(uint8_t * pointer)
 void FileBackedBuffer::remove_block_from_list(FileByteOffset & list_head, Block * curr_block)
 {
   if (curr_block->prev_block != NULL_OFFSET) {
-    Block * prev_block = reinterpret_cast<Block*>(to_pointer(curr_block->prev_block));
+    Block * prev_block = reinterpret_cast<Block *>(to_pointer(curr_block->prev_block));
     prev_block->next_block = curr_block->next_block;
   } else {
     list_head = curr_block->next_block;
   }
 
   if (curr_block->next_block != NULL_OFFSET) {
-    Block * next_block = reinterpret_cast<Block*>(to_pointer(curr_block->next_block));
+    Block * next_block = reinterpret_cast<Block *>(to_pointer(curr_block->next_block));
     next_block->prev_block = curr_block->prev_block;
   }
 
@@ -138,12 +138,39 @@ void FileBackedBuffer::remove_block_from_list(FileByteOffset & list_head, Block 
 void FileBackedBuffer::insert_block_to_list(FileByteOffset & list_head, Block * block)
 {
   if (list_head != NULL_OFFSET) {
-    Block * next_block = reinterpret_cast<Block*>(to_pointer(list_head));
-    next_block->prev_block = to_offset(reinterpret_cast<uint8_t*>(block));
+    Block * next_block = reinterpret_cast<Block *>(to_pointer(list_head));
+    next_block->prev_block = to_offset(reinterpret_cast<uint8_t *>(block));
   }
 
   block->prev_block = NULL_OFFSET;
   block->next_block = list_head;
 
-  list_head = to_offset(reinterpret_cast<uint8_t*>(block));
+  list_head = to_offset(reinterpret_cast<uint8_t *>(block));
+}
+
+std::pair<uint8_t *, size_t> FileBackedBuffer::const_iterator::operator*()
+{
+  if (m_offset == NULL_OFFSET) {
+    return std::make_pair(nullptr, 0);
+  }
+  Block * block = reinterpret_cast<Block *>(m_parent->to_pointer(m_offset));
+  return std::make_pair(block->data, block->data_size);
+}
+
+FileBackedBuffer::const_iterator FileBackedBuffer::const_iterator::operator++()
+{
+  if (m_offset != NULL_OFFSET) {
+    Block * block = reinterpret_cast<Block *>(m_parent->to_pointer(m_offset));
+    m_offset = block->next_block;
+  }
+  return *this;
+}
+
+FileBackedBuffer::const_iterator FileBackedBuffer::const_iterator::operator--()
+{
+  if (m_offset != NULL_OFFSET) {
+    Block * block = reinterpret_cast<Block *>(m_parent->to_pointer(m_offset));
+    m_offset = block->prev_block;
+  }
+  return *this;
 }
