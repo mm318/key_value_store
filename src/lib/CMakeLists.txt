@@ -2,6 +2,7 @@ include(GNUInstallDirs)
 
 add_library(key_value_store SHARED
     file_backed_buffer.cpp
+    hash_table.cpp
 )
 
 set_target_properties(key_value_store

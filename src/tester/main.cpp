@@ -1,6 +1,8 @@
 #include <cassert>
 #include <iostream>
+
 #include "file_backed_buffer.hpp"
+#include "hash_table.hpp"
 
 
 void memfill(uint8_t * buffer, const size_t buffer_size, const uint32_t pattern_data)
@@ -15,14 +17,9 @@ void memfill(uint8_t * buffer, const size_t buffer_size, const uint32_t pattern_
   }
 }
 
-int main(const int argc, const char * argv[])
+void test_buffer(const char * buffer_filename)
 {
-  if (argc < 2) {
-    std::cerr << "usage: " << argv[0] << " <dbfilename>\n";
-    return -1;
-  }
-
-  FileBackedBuffer buffer(argv[1]);
+  FileBackedBuffer buffer(buffer_filename);
 
   uint8_t * alloc1 = buffer.alloc(16);
   assert(alloc1 != nullptr);
@@ -54,6 +51,18 @@ int main(const int argc, const char * argv[])
     const std::pair<uint8_t *, size_t> data = *iter;
     std::cout << static_cast<void *>(data.first) << ": (size " << data.second << ")\n";
   }
+}
+
+int main(const int argc, const char * argv[])
+{
+  if (argc >= 2) {
+    test_buffer(argv[1]);
+  }
+
+  ConcurrentHashTable hash_table;
+
+  hash_table.put("asdf", "asdf");
+  std::cout << hash_table.get("asdf") << '\n';
 
   return 0;
 }

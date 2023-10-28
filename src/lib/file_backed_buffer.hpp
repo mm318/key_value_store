@@ -16,8 +16,9 @@ public:
   FileBackedBuffer(const char * filename);
   ~FileBackedBuffer();
 
+  // TODO: look into replacing this naive allocator implementation with open source jemalloc algorithm or something similar
   uint8_t * alloc(const size_t alloc_size);
-  void free(uint8_t * pointer);
+  void free(const uint8_t * pointer);
 
   class const_iterator
   {

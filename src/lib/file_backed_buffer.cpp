@@ -55,9 +55,12 @@ FileBackedBuffer::FileBackedBuffer(const char * filename) : m_fd(-1), m_base(nul
     // it also meets the requirement of strongly consistent, given standard proper mutex use / memory fencing
     m_base = static_cast<uint8_t *>(mmap(NULL, m_db_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0));
     if (m_base == MAP_FAILED) {
-      std::cerr << "[WARN] mmaping " << filename << " failed\n";
+      std::cerr << "[ERROR] mmaping " << filename << " failed\n";
       m_base = nullptr;
+      exit(-1);
     }
+  } else {
+    exit(-1);
   }
 
   // initialize the buffer
@@ -110,9 +113,9 @@ uint8_t * FileBackedBuffer::alloc(const size_t alloc_size)
   return nullptr;
 }
 
-void FileBackedBuffer::free(uint8_t * pointer)
+void FileBackedBuffer::free(const uint8_t * pointer)
 {
-  Block * block = reinterpret_cast<Block *>(pointer - sizeof(Block));
+  Block * block = const_cast<Block *>(reinterpret_cast<const Block *>(pointer - sizeof(Block)));
   remove_block_from_list(allocated_list(), block);
   insert_block_to_list(free_list(), block);
 }
