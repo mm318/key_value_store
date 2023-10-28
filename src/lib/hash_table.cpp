@@ -15,9 +15,11 @@ ConcurrentHashTable::ConcurrentHashTable() : m_buffer(BUFFER_FILENAME), m_hash_t
   // load what's already in the buffer
   for (auto iter = m_buffer.begin_allocated(); iter != m_buffer.end_allocated(); ++iter) {
     const std::pair<uint8_t *, size_t> data = *iter;
+
     Bucket * new_bucket = get_new_bucket();
-    new_bucket->data.set_buffer_and_key(data.first, data.second);
-    size_t hash = hasher(new_bucket->data.get_key());
+    new_bucket->data.set(reinterpret_cast<char *>(data.first), BufferFreer(this));
+
+    size_t hash = hasher(new_bucket->data.get().first.get());
     size_t hash_table_index = hash % m_hash_table.size();
     store_bucket(new_bucket, hash_table_index);
   }
@@ -25,21 +27,16 @@ ConcurrentHashTable::ConcurrentHashTable() : m_buffer(BUFFER_FILENAME), m_hash_t
 
 void ConcurrentHashTable::put(const std::string & key, const std::string & value)
 {
+  std::unique_lock<std::mutex> write_lock(m_write_mutex);
+  
+  const size_t allocation_size = key.length() + 1 + value.length() + 1;
+
   std::pair<Bucket *, size_t> result = find_bucket_with_key(key);
+  Bucket * bucket = (result.first == nullptr) ? get_new_bucket() : result.first;
+  bucket->data.set(m_buffer.alloc(allocation_size), BufferFreer(this), key, value);
+
   if (result.first == nullptr) {
-    Bucket * new_bucket = get_new_bucket();
-    size_t allocation_size = key.length() + 1 + value.length() + 1;   // could optimize to account for growth of value length
-    new_bucket->data.set_buffer_and_key(m_buffer.alloc(allocation_size), allocation_size, &key);
-    assert(new_bucket->data.set_value(value));
-    store_bucket(new_bucket, result.second);
-  } else {
-    Bucket * bucket = result.first;
-    if (value.length() + 1 > bucket->data.get_value_capacity()) {
-      m_buffer.free(reinterpret_cast<const uint8_t *>(bucket->data.get_key()));
-      size_t allocation_size = key.length() + 1 + value.length() + 1; // could optimize to account for growth of value length
-      bucket->data.set_buffer_and_key(m_buffer.alloc(allocation_size), allocation_size, &key);
-    }
-    assert(bucket->data.set_value(value));
+    store_bucket(bucket, result.second);
   }
 }
 
@@ -49,7 +46,7 @@ std::string ConcurrentHashTable::get(const std::string & key)
   if (result.first == nullptr) {
     return std::string();
   }
-  return result.first->data.get_value();
+  return result.first->data.get().second;
 }
 
 std::pair<ConcurrentHashTable::Bucket *, size_t> ConcurrentHashTable::find_bucket_with_key(const std::string & key) const
@@ -57,12 +54,12 @@ std::pair<ConcurrentHashTable::Bucket *, size_t> ConcurrentHashTable::find_bucke
   size_t hash = hasher(key);
   size_t hash_table_index = hash % m_hash_table.size();
 
-  Bucket * curr_bucket = m_hash_table[hash_table_index];
+  Bucket * curr_bucket = m_hash_table[hash_table_index].load(std::memory_order_acquire);
   if (curr_bucket == nullptr) {
     return std::make_pair(nullptr, hash_table_index);
   }
 
-  while (key != curr_bucket->data.get_key()) {
+  while (key != curr_bucket->data.get().first.get()) {
     curr_bucket = curr_bucket->next_bucket;
     if (curr_bucket == nullptr) {
       break;
@@ -80,43 +77,40 @@ ConcurrentHashTable::Bucket * ConcurrentHashTable::get_new_bucket()
 
 void ConcurrentHashTable::store_bucket(Bucket * bucket, const size_t hash_table_index)
 {
-  bucket->next_bucket = m_hash_table[hash_table_index];
-  m_hash_table[hash_table_index] = bucket;
+  bucket->next_bucket = m_hash_table[hash_table_index].load(std::memory_order_relaxed);
+  m_hash_table[hash_table_index].store(bucket, std::memory_order_release);
 }
 
-void ConcurrentHashTable::KeyValuePair::set_buffer_and_key(uint8_t * buffer_data, const size_t buffer_size, const std::string * key)
+void ConcurrentHashTable::KeyValuePair::set(uint8_t * data_buffer, BufferFreer deleter, const std::string & key, const std::string & value)
 {
-  if (buffer_data == nullptr) {
-    std::cerr << "[ERROR] out of memory\n";
-    assert(false);
-  }
-
-  char * key_data = reinterpret_cast<char *>(buffer_data);
-  if (key != nullptr) {
-    if (key->length() + 1 > buffer_size) {
-      std::cerr << "[ERROR] can't fit key " << *key << " in provided buffer\n";
-      assert(false);
-    }
-    strcpy(key_data, key->c_str());
-  }
+  char * key_data = reinterpret_cast<char *>(data_buffer);
+  strncpy(key_data, key.c_str(), key.length() + 1);
 
   char * key_data_end = strchr(key_data, '\0');
   assert(key_data_end != nullptr);
 
-  m_key = key_data;
-  m_value = key_data_end + 1;
-  m_value_capacity = buffer_size - (m_value - m_key);
+  char * value_data = key_data_end + 1;
+  strncpy(value_data, value.c_str(), value.length() + 1);
+
+  set(key_data, deleter);
 }
 
-bool ConcurrentHashTable::KeyValuePair::set_value(const std::string & value)
+void ConcurrentHashTable::KeyValuePair::set(const char * key_value_data, BufferFreer deleter)
 {
-  strncpy(m_value, value.c_str(), std::min(value.length() + 1, m_value_capacity));
-  return value.length() + 1 <= m_value_capacity;
+  std::atomic_store_explicit(&m_key_value_data, std::shared_ptr<const char>(key_value_data, deleter), std::memory_order_release);
+}
+
+std::pair<std::shared_ptr<const char>, const char *> ConcurrentHashTable::KeyValuePair::get() const
+{
+  std::shared_ptr<const char> key = std::atomic_load_explicit(&m_key_value_data, std::memory_order_acquire);
+  const char * value = strchr(key.get(), '\0') + 1;
+  return std::make_pair(std::move(key), value);
 }
 
 std::pair<std::string, std::string> ConcurrentHashTable::const_iterator::operator*()
 {
-  return std::make_pair(m_iter->data.get_key(), m_iter->data.get_value());
+  auto key_value_pair = m_iter->data.get();
+  return std::make_pair(key_value_pair.first.get(), key_value_pair.second);
 }
 
 ConcurrentHashTable::const_iterator ConcurrentHashTable::const_iterator::operator++()

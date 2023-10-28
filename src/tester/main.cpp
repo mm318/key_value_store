@@ -62,20 +62,23 @@ int main(const int argc, const char * argv[])
     test_buffer(argv[1]);
   }
 
-  ConcurrentHashTable hash_table;
+  ConcurrentHashTable * hash_table = new ConcurrentHashTable();
 
   std::cout << "key-value pairs in hash table:\n";
-  for (auto iter = hash_table.begin(); iter != hash_table.end(); ++iter) {
+  for (auto iter = hash_table->begin(); iter != hash_table->end(); ++iter) {
     const std::pair<std::string, std::string> key_value_pair = *iter;
     std::cout << key_value_pair.first << ": " << key_value_pair.second << '\n';
   }
+  std::cout << "end key-value pairs\n";
 
-  hash_table.put("asdf", "asdf");
-  std::cout << hash_table.get("asdf") << '\n';
-  hash_table.put("asdf", "asdfasdf");
-  std::cout << hash_table.get("asdf") << '\n';
-  hash_table.put("asdf", "as");
-  std::cout << hash_table.get("asdf") << '\n';
+  hash_table->put("asdf", "asdf");
+  std::cout << hash_table->get("asdf") << '\n';
+  hash_table->put("asdf", "asdfasdf");
+  std::cout << hash_table->get("asdf") << '\n';
+  hash_table->put("asdf", "as");
+  std::cout << hash_table->get("asdf") << '\n';
+
+  // purposely leak hash_table to simulate process crash
 
   return 0;
 }

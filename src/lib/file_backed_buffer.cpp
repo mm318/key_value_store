@@ -53,7 +53,6 @@ FileBackedBuffer::FileBackedBuffer(const char * filename) : m_fd(-1), m_base(nul
 
   if (m_fd >= 0) {
     // using an mmap'd file to provide easy to use interface for client code
-    // it also meets the requirement of strongly consistent, given standard proper mutex use / memory fencing
     m_base = static_cast<uint8_t *>(mmap(NULL, m_db_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0));
     if (m_base == MAP_FAILED) {
       std::cerr << "[ERROR] mmaping " << filename << " failed\n";
@@ -88,6 +87,10 @@ FileBackedBuffer::~FileBackedBuffer()
 
 uint8_t * FileBackedBuffer::alloc(const size_t alloc_size)
 {
+  std::unique_lock<std::mutex> write_lock(m_mutex);
+
+  uint8_t * result = nullptr;
+
   FileByteOffset curr_free_block = m_header->next_free_block;
   while (curr_free_block != NULL_OFFSET) {
     Block * curr_block = reinterpret_cast<Block *>(to_pointer(curr_free_block));
@@ -103,17 +106,24 @@ uint8_t * FileBackedBuffer::alloc(const size_t alloc_size)
 
       insert_block_to_list(allocated_list(), curr_block);
 
-      return curr_block->data;
+      result = curr_block->data;
+      break;
     }
 
     curr_free_block = curr_block->next_block;
   }
 
-  return nullptr;
+  if (result == nullptr) {
+    std::cerr << "[ERROR] out of buffer space\n";
+    assert(false);
+  }
+
+  return result;
 }
 
 void FileBackedBuffer::free(const uint8_t * pointer)
 {
+  std::unique_lock<std::mutex> write_lock(m_mutex);
   Block * block = const_cast<Block *>(reinterpret_cast<const Block *>(pointer - sizeof(Block)));
   remove_block_from_list(allocated_list(), block);
   insert_block_to_list(free_list(), block);

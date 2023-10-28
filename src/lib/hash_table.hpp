@@ -5,12 +5,16 @@
 #include <deque>
 #include <string>
 #include <functional>
+#include <atomic>
+#include <mutex>
+#include <memory>
 
 #include "file_backed_buffer.hpp"
 
 // using a hash table to implement the key-value store mechanism
-// it locks on writes and is lockless on reads. this meets the heavily read-skewed usage pattern and still works
-// with multiple writers
+// it locks on writes and is lockless on reads (except when the last reader of an expiring value needs to deallocate,
+// similar to left-right concurrency control, but won't be doubling-up on memory allocations).
+// this meets the heavily read-skewed usage pattern and still works with multiple writers
 // collisions are resolved with open hashing / separate chaining instead of closed hashing / open addressing
 // since the keys are strings of arbitrary length, which have infinitely many possibilities, a separate chainining
 // hash table can technically keep accepting new keys indefinitely, so the hash table has less need to resize
@@ -23,6 +27,7 @@ public:
 
   ConcurrentHashTable();
 
+  // basic functionality requirements: put() and get()
   void put(const std::string & key, const std::string & value);
   std::string get(const std::string & key); // returns empty string if key is not found
 
@@ -47,23 +52,32 @@ public:
   const_iterator end() const { return m_bucket_storage.cend(); }
 
 private:
-  class KeyValuePair {
+  class BufferFreer {
   public:
-    KeyValuePair() : m_key(nullptr), m_value(nullptr) {}
+    BufferFreer(ConcurrentHashTable * parent) : m_parent(parent) {}
 
-    void set_buffer_and_key(uint8_t * buffer_data, const size_t buffer_size, const std::string * key = nullptr);
-
-    size_t get_value_capacity() const { return m_value_capacity; }
-
-    const char * get_key() const { return m_key; }
-    const char * get_value() const { return m_value; }
-
-    bool set_value(const std::string & value);
+    void operator()(const char * ptr) { m_parent->m_buffer.free(reinterpret_cast<const uint8_t *>(ptr)); }
 
   private:
-    const char * m_key;
-    char * m_value;
-    size_t m_value_capacity;
+    ConcurrentHashTable * m_parent;
+  };
+
+  class KeyValuePair
+  {
+  public:
+    KeyValuePair() {}
+
+    void set(uint8_t * data_buffer, BufferFreer deleter, const std::string & key, const std::string & value);
+    void set(const char * key_value_data, BufferFreer deleter);
+    std::pair<std::shared_ptr<const char>, const char *> get() const;
+
+  private:
+    // this is one of the two places where reader-writer contention may occur
+    // when reader wants to access and writer wants to update the same bucket
+    // resolved with atomic load/store of this pointer. this also meets the strongly consistent requirement
+    // writer-writer contention does not occur because second writer is locked out
+    // at the beginning of put()
+    std::shared_ptr<const char> m_key_value_data;
   };
 
   struct Bucket {
@@ -76,10 +90,16 @@ private:
   Bucket * get_new_bucket();
   void store_bucket(Bucket * bucket, const size_t hash_table_index);
 
+  std::mutex m_write_mutex;
   FileBackedBuffer m_buffer;
-  std::vector<Bucket*> m_hash_table;
   std::deque<Bucket> m_bucket_storage;
-  // Bucket * m_free_bucket_list_head;  // don't need this as we're never erasing keys from store
+  // this is one of the two places where reader-writer contention may occur
+  // when reader is searching for the right bucket while writer is adding a bucket.
+  // resolved because adding a bucket doesn't impact the subsequent pointers in the list (Bucket::next_bucket pointers),
+  // only the top-level pointer needs to be updated, which is done atomically and with release semantics
+  // writer-writer contention does not occur because second writer is locked out
+  // at the beginning of put() until first writer completes
+  std::vector<std::atomic<Bucket *>> m_hash_table;
 
   static constexpr std::hash<std::string> hasher = std::hash<std::string>();
 };

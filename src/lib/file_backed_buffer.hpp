@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <mutex>
+
 
 using FileByteOffset = size_t;
 
@@ -71,6 +73,7 @@ private:
   int m_fd;
   int m_db_size;
   uint8_t * m_base;
+  std::mutex m_mutex;
   BufferHeader * m_header;
 };
 
