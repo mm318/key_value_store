@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <cassert>
 
 #include "file_backed_buffer.hpp"
 
@@ -57,11 +58,9 @@ FileBackedBuffer::FileBackedBuffer(const char * filename) : m_fd(-1), m_base(nul
     if (m_base == MAP_FAILED) {
       std::cerr << "[ERROR] mmaping " << filename << " failed\n";
       m_base = nullptr;
-      exit(-1);
     }
-  } else {
-    exit(-1);
   }
+  assert(m_base != nullptr);
 
   // initialize the buffer
   m_header = reinterpret_cast<BufferHeader *>(m_base);

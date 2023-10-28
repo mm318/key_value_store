@@ -1,15 +1,16 @@
 ﻿#include <iostream>
 #include <cstring>
+#include <algorithm>
 #include <cassert>
 
 #include "hash_table.hpp"
 
 
 constexpr size_t HASH_TABLE_SIZE = 266671;  // targeting about 200000 elements in hash table at 75% load factor
-
+constexpr char ConcurrentHashTable::BUFFER_FILENAME[];
 constexpr std::hash<std::string> ConcurrentHashTable::hasher;
 
-ConcurrentHashTable::ConcurrentHashTable() : m_buffer("kvstore.bin"), m_hash_table(HASH_TABLE_SIZE)
+ConcurrentHashTable::ConcurrentHashTable() : m_buffer(BUFFER_FILENAME), m_hash_table(HASH_TABLE_SIZE)
 {
   // load what's already in the buffer
   for (auto iter = m_buffer.begin_allocated(); iter != m_buffer.end_allocated(); ++iter) {
@@ -87,14 +88,14 @@ void ConcurrentHashTable::KeyValuePair::set_buffer_and_key(uint8_t * buffer_data
 {
   if (buffer_data == nullptr) {
     std::cerr << "[ERROR] out of memory\n";
-    exit(-1);
+    assert(false);
   }
 
   char * key_data = reinterpret_cast<char *>(buffer_data);
   if (key != nullptr) {
     if (key->length() + 1 > buffer_size) {
       std::cerr << "[ERROR] can't fit key " << *key << " in provided buffer\n";
-      exit(-1);
+      assert(false);
     }
     strcpy(key_data, key->c_str());
   }
@@ -109,6 +110,23 @@ void ConcurrentHashTable::KeyValuePair::set_buffer_and_key(uint8_t * buffer_data
 
 bool ConcurrentHashTable::KeyValuePair::set_value(const std::string & value)
 {
-  strncpy(m_value, value.c_str(), m_value_capacity);
+  strncpy(m_value, value.c_str(), std::min(value.length() + 1, m_value_capacity));
   return value.length() + 1 <= m_value_capacity;
+}
+
+std::pair<std::string, std::string> ConcurrentHashTable::const_iterator::operator*()
+{
+  return std::make_pair(m_iter->data.get_key(), m_iter->data.get_value());
+}
+
+ConcurrentHashTable::const_iterator ConcurrentHashTable::const_iterator::operator++()
+{
+  ++m_iter;
+  return *this;
+}
+
+ConcurrentHashTable::const_iterator ConcurrentHashTable::const_iterator::operator--()
+{
+  --m_iter;
+  return *this;
 }

@@ -16,11 +16,35 @@
 // hash table can technically keep accepting new keys indefinitely, so the hash table has less need to resize
 class ConcurrentHashTable
 {
+  struct Bucket;
+
 public:
+  static constexpr char BUFFER_FILENAME[] = "kvstore.bin";
+
   ConcurrentHashTable();
 
   void put(const std::string & key, const std::string & value);
   std::string get(const std::string & key); // returns empty string if key is not found
+
+  class const_iterator
+  {
+  public:
+    const_iterator(std::deque<Bucket>::const_iterator iter) : m_iter(iter) {}
+
+    std::pair<std::string, std::string> operator*();
+
+    const_iterator operator++();
+    const_iterator operator--();
+
+    bool operator==(const const_iterator & other) const { return other.m_iter == m_iter; }
+    bool operator!=(const const_iterator & other) const { return other.m_iter != m_iter; }
+
+  private:
+    std::deque<Bucket>::const_iterator m_iter;
+  };
+
+  const_iterator begin() const { return m_bucket_storage.cbegin(); }
+  const_iterator end() const { return m_bucket_storage.cend(); }
 
 private:
   class KeyValuePair {
