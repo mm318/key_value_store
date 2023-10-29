@@ -2,15 +2,17 @@
 #include <cstring>
 #include <algorithm>
 #include <cassert>
+#include <limits>
 
 #include "hash_table.hpp"
 
 
+constexpr size_t BUFFER_SIZE = 536870912;   // bytes
 constexpr size_t HASH_TABLE_SIZE = 266671;  // targeting about 200000 elements in hash table at 75% load factor
 constexpr char ConcurrentHashTable::BUFFER_FILENAME[];
 constexpr std::hash<std::string> ConcurrentHashTable::hasher;
 
-ConcurrentHashTable::ConcurrentHashTable() : m_buffer(BUFFER_FILENAME), m_hash_table(HASH_TABLE_SIZE)
+ConcurrentHashTable::ConcurrentHashTable() : m_buffer(BUFFER_FILENAME, BUFFER_SIZE), m_hash_table(HASH_TABLE_SIZE)
 {
   // load what's already in the buffer
   for (auto iter = m_buffer.begin_allocated(); iter != m_buffer.end_allocated(); ++iter) {
@@ -25,19 +27,25 @@ ConcurrentHashTable::ConcurrentHashTable() : m_buffer(BUFFER_FILENAME), m_hash_t
   }
 }
 
-void ConcurrentHashTable::put(const std::string & key, const std::string & value)
+bool ConcurrentHashTable::put(const std::string & key, const std::string & value)
 {
   std::unique_lock<std::mutex> write_lock(m_write_mutex);
   
   const size_t allocation_size = key.length() + 1 + value.length() + 1;
+  uint8_t * data_buffer = m_buffer.alloc(allocation_size);
+  if (data_buffer == nullptr) {
+    return false;
+  }
 
   std::pair<Bucket *, size_t> result = find_bucket_with_key(key);
   Bucket * bucket = (result.first == nullptr) ? get_new_bucket() : result.first;
-  bucket->data.set(m_buffer.alloc(allocation_size), BufferFreer(this), key, value);
+  bucket->data.set(data_buffer, BufferFreer(this), key, value);
 
   if (result.first == nullptr) {
     store_bucket(bucket, result.second);
   }
+
+  return true;
 }
 
 std::string ConcurrentHashTable::get(const std::string & key)
@@ -123,4 +131,43 @@ ConcurrentHashTable::const_iterator ConcurrentHashTable::const_iterator::operato
 {
   --m_iter;
   return *this;
+}
+
+void ConcurrentHashTable::print_stats() const
+{
+  size_t num_key_value_pairs = 0;
+  size_t smallest_value_size = std::numeric_limits<size_t>::max();
+  size_t largest_value_size = 0;
+  float average_value_size = 0.0f;
+  for (auto iter = begin(); iter != end(); ++iter) {
+    const std::pair<std::string, std::string> key_value_pair = *iter;
+    if (key_value_pair.second.length() < smallest_value_size) {
+      smallest_value_size = key_value_pair.second.length();
+    }
+    if (key_value_pair.second.length() > largest_value_size) {
+      largest_value_size = key_value_pair.second.length();
+    }
+    average_value_size += key_value_pair.second.length();
+    ++num_key_value_pairs;
+  }
+  average_value_size /= static_cast<float>(num_key_value_pairs);
+
+  size_t num_table_elements = 0;
+  for (auto iter = m_hash_table.begin(); iter != m_hash_table.end(); ++iter) {
+    if (iter->load(std::memory_order_relaxed) != nullptr) {
+      ++num_table_elements;
+    }
+  }
+  float load_factor = static_cast<float>(num_table_elements) / m_hash_table.size();
+
+  std::cout << "hash table stats:\n"
+            << "key-value pairs: " << num_key_value_pairs << '\n'
+            << "elements in table: " << num_table_elements << '\n'
+            << "load factor: " << load_factor << '\n'
+            << "smallest value size (bytes): " << smallest_value_size << '\n'
+            << "largest value size (bytes): " << largest_value_size << '\n'
+            << "average value size (bytes): " << average_value_size << '\n'
+            << '\n';
+
+  m_buffer.print_stats();
 }

@@ -28,7 +28,7 @@ public:
   ConcurrentHashTable();
 
   // basic functionality requirements: put() and get()
-  void put(const std::string & key, const std::string & value);
+  bool put(const std::string & key, const std::string & value);
   std::string get(const std::string & key); // returns empty string if key is not found
 
   class const_iterator
@@ -50,6 +50,8 @@ public:
 
   const_iterator begin() const { return m_bucket_storage.cbegin(); }
   const_iterator end() const { return m_bucket_storage.cend(); }
+
+  void print_stats() const;
 
 private:
   class BufferFreer {

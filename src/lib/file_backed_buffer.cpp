@@ -7,11 +7,9 @@
 #include <unistd.h>
 #include <errno.h>
 #include <cassert>
+#include <limits>
 
 #include "file_backed_buffer.hpp"
-
-
-constexpr size_t BUFFER_SIZE_BYTES = 67108864;
 
 
 static int get_file_size(int fd)
@@ -26,7 +24,7 @@ static int get_file_size(int fd)
   }
 }
 
-FileBackedBuffer::FileBackedBuffer(const char * filename) : m_fd(-1), m_base(nullptr)
+FileBackedBuffer::FileBackedBuffer(const char * filename, const size_t buffer_size) : m_fd(-1), m_base(nullptr)
 {
   bool new_file = false;
 
@@ -43,8 +41,8 @@ FileBackedBuffer::FileBackedBuffer(const char * filename) : m_fd(-1), m_base(nul
     }
   } else {
     new_file = true;
-    if (ftruncate(m_fd, BUFFER_SIZE_BYTES) != 0) {
-      std::cerr << "[WARN] failed to resize buffer file to " << BUFFER_SIZE_BYTES << " bytes\n";
+    if (ftruncate(m_fd, buffer_size) != 0) {
+      std::cerr << "[WARN] failed to resize buffer file to " << buffer_size << " bytes\n";
     }
   }
 
@@ -113,11 +111,7 @@ uint8_t * FileBackedBuffer::alloc(const size_t alloc_size)
     curr_free_block = curr_block->next_block;
   }
 
-  if (result == nullptr) {
-    std::cerr << "[ERROR] out of buffer space\n";
-    assert(false);
-  }
-
+  assert(result != nullptr);
   return result;
 }
 
@@ -185,4 +179,61 @@ FileBackedBuffer::const_iterator FileBackedBuffer::const_iterator::operator--()
     m_offset = block->prev_block;
   }
   return *this;
+}
+
+void FileBackedBuffer::print_stats() const
+{
+  size_t num_allocated_blocks = 0;
+  size_t smallest_allocated_block_size = std::numeric_limits<size_t>::max();
+  size_t largest_allocated_block_size = 0;
+  size_t total_allocated_block_size = 0;
+  for (auto iter = begin_allocated(); iter != end_allocated(); ++iter) {
+    const std::pair<uint8_t *, size_t> data = *iter;
+    const size_t block_size = data.second + sizeof(Block);
+    if (block_size < smallest_allocated_block_size) {
+      smallest_allocated_block_size = block_size;
+    }
+    if (block_size > largest_allocated_block_size) {
+      largest_allocated_block_size = block_size;
+    }
+    total_allocated_block_size += block_size;
+    ++num_allocated_blocks;
+  }
+  float average_allocated_block_size = static_cast<float>(total_allocated_block_size) / num_allocated_blocks;
+
+  size_t num_free_blocks = 0;
+  size_t smallest_free_block_size = std::numeric_limits<size_t>::max();
+  size_t largest_free_block_size = 0;
+  size_t total_free_block_size = 0;
+  for (auto iter = begin_free(); iter != end_free(); ++iter) {
+    const std::pair<uint8_t *, size_t> data = *iter;
+    const size_t block_size = data.second + sizeof(Block);
+    if (block_size < smallest_free_block_size) {
+      smallest_free_block_size = block_size;
+    }
+    if (block_size > largest_free_block_size) {
+      largest_free_block_size = block_size;
+    }
+    total_free_block_size += block_size;
+    ++num_free_blocks;
+  }
+  float average_free_block_size = static_cast<float>(total_free_block_size) / num_free_blocks;
+  float fragmentation = 0.0f;
+  if (total_free_block_size != 0) {
+    fragmentation = static_cast<float>(total_free_block_size - largest_free_block_size) / total_free_block_size;
+  }
+
+  std::cout << "file buffer stats:\n"
+            << "allocated blocks: " << num_allocated_blocks << '\n'
+            << "smallest allocated block (bytes): " << smallest_allocated_block_size << '\n'
+            << "largest allocated block (bytes): " << largest_allocated_block_size << '\n'
+            << "total allocated block (bytes): " << total_allocated_block_size << '\n'
+            << "average allocated block (bytes): " << average_allocated_block_size << '\n'
+            << "free blocks: " << num_free_blocks << '\n'
+            << "smallest free block (bytes): " << smallest_free_block_size << '\n'
+            << "largest free block (bytes): " << largest_free_block_size << '\n'
+            << "total free block (bytes): " << total_free_block_size << '\n'
+            << "average free block (bytes): " << average_free_block_size << '\n'
+            << "free space fragmentation: " << fragmentation << '\n'
+            << '\n';
 }

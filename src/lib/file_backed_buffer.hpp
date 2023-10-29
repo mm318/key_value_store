@@ -15,7 +15,7 @@ constexpr FileByteOffset NULL_OFFSET = 0;
 class FileBackedBuffer
 {
 public:
-  FileBackedBuffer(const char * filename);
+  FileBackedBuffer(const char * filename, const size_t buffer_size);
   ~FileBackedBuffer();
 
   // TODO: look into replacing this naive allocator implementation with open source jemalloc algorithm or something similar
@@ -45,6 +45,8 @@ public:
 
   const_iterator begin_free() const { return const_iterator(this, m_header->next_free_block); }
   const_iterator end_free() const { return const_iterator(this, NULL_OFFSET); }
+
+  void print_stats() const;
 
 private:
   struct BufferHeader {
