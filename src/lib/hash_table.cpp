@@ -19,9 +19,9 @@ ConcurrentHashTable::ConcurrentHashTable() : m_buffer(BUFFER_FILENAME, BUFFER_SI
     const std::pair<uint8_t *, size_t> data = *iter;
 
     Bucket * new_bucket = get_new_bucket();
-    new_bucket->data.set(reinterpret_cast<char *>(data.first), BufferFreer(this));
+    new_bucket->key_value_pair.set(reinterpret_cast<char *>(data.first), BufferFreer(this));
 
-    size_t hash = hasher(new_bucket->data.get().first.get());
+    size_t hash = hasher(new_bucket->key_value_pair.get().first.get());
     size_t hash_table_index = hash % m_hash_table.size();
     store_bucket(new_bucket, hash_table_index);
   }
@@ -30,7 +30,7 @@ ConcurrentHashTable::ConcurrentHashTable() : m_buffer(BUFFER_FILENAME, BUFFER_SI
 bool ConcurrentHashTable::put(const std::string & key, const std::string & value)
 {
   std::unique_lock<std::mutex> write_lock(m_write_mutex);
-  
+
   const size_t allocation_size = key.length() + 1 + value.length() + 1;
   uint8_t * data_buffer = m_buffer.alloc(allocation_size);
   if (data_buffer == nullptr) {
@@ -39,7 +39,7 @@ bool ConcurrentHashTable::put(const std::string & key, const std::string & value
 
   std::pair<Bucket *, size_t> result = find_bucket_with_key(key);
   Bucket * bucket = (result.first == nullptr) ? get_new_bucket() : result.first;
-  bucket->data.set(data_buffer, BufferFreer(this), key, value);
+  bucket->key_value_pair.set(reinterpret_cast<char *>(data_buffer), BufferFreer(this), key, value);
 
   if (result.first == nullptr) {
     store_bucket(bucket, result.second);
@@ -54,7 +54,7 @@ std::string ConcurrentHashTable::get(const std::string & key)
   if (result.first == nullptr) {
     return std::string();
   }
-  return result.first->data.get().second;
+  return result.first->key_value_pair.get().second;
 }
 
 std::pair<ConcurrentHashTable::Bucket *, size_t> ConcurrentHashTable::find_bucket_with_key(const std::string & key) const
@@ -67,7 +67,7 @@ std::pair<ConcurrentHashTable::Bucket *, size_t> ConcurrentHashTable::find_bucke
     return std::make_pair(nullptr, hash_table_index);
   }
 
-  while (key != curr_bucket->data.get().first.get()) {
+  while (key != curr_bucket->key_value_pair.get().first.get()) {
     curr_bucket = curr_bucket->next_bucket;
     if (curr_bucket == nullptr) {
       break;
@@ -89,9 +89,13 @@ void ConcurrentHashTable::store_bucket(Bucket * bucket, const size_t hash_table_
   m_hash_table[hash_table_index].store(bucket, std::memory_order_release);
 }
 
-void ConcurrentHashTable::KeyValuePair::set(uint8_t * data_buffer, BufferFreer deleter, const std::string & key, const std::string & value)
+// information to be stored in key_value_data: <key> + '\0' + <value> + '\0'
+void ConcurrentHashTable::KeyValuePair::set(char * key_value_data,
+                                            BufferFreer deleter,
+                                            const std::string & key,
+                                            const std::string & value)
 {
-  char * key_data = reinterpret_cast<char *>(data_buffer);
+  char * key_data = key_value_data;
   strncpy(key_data, key.c_str(), key.length() + 1);
 
   char * key_data_end = strchr(key_data, '\0');
@@ -103,9 +107,11 @@ void ConcurrentHashTable::KeyValuePair::set(uint8_t * data_buffer, BufferFreer d
   set(key_data, deleter);
 }
 
-void ConcurrentHashTable::KeyValuePair::set(const char * key_value_data, BufferFreer deleter)
+void ConcurrentHashTable::KeyValuePair::set(char * key_value_data, BufferFreer deleter)
 {
-  std::atomic_store_explicit(&m_key_value_data, std::shared_ptr<const char>(key_value_data, deleter), std::memory_order_release);
+  std::atomic_store_explicit(&m_key_value_data,
+                             std::shared_ptr<const char>(key_value_data, deleter),
+                             std::memory_order_release);
 }
 
 std::pair<std::shared_ptr<const char>, const char *> ConcurrentHashTable::KeyValuePair::get() const
@@ -117,7 +123,7 @@ std::pair<std::shared_ptr<const char>, const char *> ConcurrentHashTable::KeyVal
 
 std::pair<std::string, std::string> ConcurrentHashTable::const_iterator::operator*()
 {
-  auto key_value_pair = m_iter->data.get();
+  auto key_value_pair = m_iter->key_value_pair.get();
   return std::make_pair(key_value_pair.first.get(), key_value_pair.second);
 }
 

@@ -14,7 +14,7 @@ Features:
 ## Build
 
 Requires zig and a generally POSIX-compliant operating system
-```
+```bash
 cd <"key_value_store" root dir>
 zig build
 ```
@@ -24,15 +24,15 @@ zig build
 ## Run
 
 Basic test, multiple threads writing their names to the same set of keys
-```
+```bash
 # from "key_value_store" root dir
 zig-out/bin/kv_basic_test
 ```
 
 Stress test, multiple threads pummeling the key-value store with reads and writes with random values ranging from 8 bytes to 900 kilobytes
-```
+```bash
 # from "key_value_store" root dir
-zig build run
+zig build -Doptimize=ReleaseSafe run
 ```
 
 If desired, reset the persistent state by deleting the generated `kvstore.bin` file in the present working directory.

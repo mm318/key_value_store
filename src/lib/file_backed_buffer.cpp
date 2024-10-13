@@ -8,8 +8,10 @@
 #include <errno.h>
 #include <cassert>
 #include <limits>
+#include <cmath>
 
 #include "file_backed_buffer.hpp"
+#include "fpng.h"
 
 
 static int get_file_size(int fd)
@@ -63,13 +65,13 @@ FileBackedBuffer::FileBackedBuffer(const char * filename, const size_t buffer_si
   m_header = reinterpret_cast<BufferHeader *>(m_base);
   if (m_header != nullptr && new_file) {
     std::cout << "[INFO] initializing buffer file contents\n";
-    m_header->next_free_block = sizeof(BufferHeader);
-    m_header->next_allocated_block = NULL_OFFSET;
+    m_header->next_free_block_offset = sizeof(BufferHeader);
+    m_header->next_allocated_block_offset = NULL_OFFSET;
 
-    Block * new_block = reinterpret_cast<Block *>(to_pointer(m_header->next_free_block));
+    Block * new_block = reinterpret_cast<Block *>(to_pointer(m_header->next_free_block_offset));
     new_block->data_size = m_db_size - sizeof(BufferHeader) - sizeof(Block);
-    new_block->prev_block = NULL_OFFSET;
-    new_block->next_block = NULL_OFFSET;
+    new_block->prev_block_offset = NULL_OFFSET;
+    new_block->next_block_offset = NULL_OFFSET;
   }
 }
 
@@ -89,29 +91,36 @@ uint8_t * FileBackedBuffer::alloc(const size_t alloc_size)
 
   uint8_t * result = nullptr;
 
-  FileByteOffset curr_free_block = m_header->next_free_block;
-  while (curr_free_block != NULL_OFFSET) {
-    Block * curr_block = reinterpret_cast<Block *>(to_pointer(curr_free_block));
+  FileByteOffset curr_free_block_offset = m_header->next_free_block_offset;
+  while (curr_free_block_offset != NULL_OFFSET) {
+    Block * curr_block = reinterpret_cast<Block *>(to_pointer(curr_free_block_offset));
     if (curr_block->data_size >= alloc_size) {
       remove_block_from_list(free_list(), curr_block);
 
-      if (curr_block->data_size >= alloc_size + sizeof(Block) + 100 /* only 100 bytes oversized do we split the block, it's a heurestic */) {
-        Block * new_block = reinterpret_cast<Block *>(curr_block->data + alloc_size);
-        new_block->data_size = curr_block->data_size - alloc_size - sizeof(Block);
-        insert_block_to_list(free_list(), new_block);
+      // if the size of the currently available block is >100 bytes greater than the requested size
+      // then split the currently available block into two. >100 bytes is a heurestic
+      if (curr_block->data_size >= alloc_size + sizeof(Block) + 100) {
+        Block * split_block = reinterpret_cast<Block *>(curr_block->data + alloc_size);
+        split_block->data_size = curr_block->data_size - alloc_size - sizeof(Block);
+        insert_block_to_list(free_list(), split_block);
         curr_block->data_size = alloc_size;
       }
 
       insert_block_to_list(allocated_list(), curr_block);
 
       result = curr_block->data;
+      // *result = '\0'; // perform a non-comprehensive but cheap data reset
       break;
     }
 
-    curr_free_block = curr_block->next_block;
+    curr_free_block_offset = curr_block->next_block_offset;
   }
 
-  assert(result != nullptr);
+  if (result == nullptr) {
+    std::cerr << "[WARN] Failed to allocate " << alloc_size << " bytes\n";
+    // assert(false);
+  }
+
   return result;
 }
 
@@ -125,31 +134,31 @@ void FileBackedBuffer::free(const uint8_t * pointer)
 
 void FileBackedBuffer::remove_block_from_list(FileByteOffset & list_head, Block * curr_block)
 {
-  if (curr_block->prev_block != NULL_OFFSET) {
-    Block * prev_block = reinterpret_cast<Block *>(to_pointer(curr_block->prev_block));
-    prev_block->next_block = curr_block->next_block;
+  if (curr_block->prev_block_offset != NULL_OFFSET) {
+    Block * prev_block = reinterpret_cast<Block *>(to_pointer(curr_block->prev_block_offset));
+    prev_block->next_block_offset = curr_block->next_block_offset;
   } else {
-    list_head = curr_block->next_block;
+    list_head = curr_block->next_block_offset;
   }
 
-  if (curr_block->next_block != NULL_OFFSET) {
-    Block * next_block = reinterpret_cast<Block *>(to_pointer(curr_block->next_block));
-    next_block->prev_block = curr_block->prev_block;
+  if (curr_block->next_block_offset != NULL_OFFSET) {
+    Block * next_block = reinterpret_cast<Block *>(to_pointer(curr_block->next_block_offset));
+    next_block->prev_block_offset = curr_block->prev_block_offset;
   }
 
-  curr_block->prev_block = NULL_OFFSET;
-  curr_block->next_block = NULL_OFFSET;
+  curr_block->prev_block_offset = NULL_OFFSET;
+  curr_block->next_block_offset = NULL_OFFSET;
 }
 
 void FileBackedBuffer::insert_block_to_list(FileByteOffset & list_head, Block * block)
 {
   if (list_head != NULL_OFFSET) {
     Block * next_block = reinterpret_cast<Block *>(to_pointer(list_head));
-    next_block->prev_block = to_offset(reinterpret_cast<uint8_t *>(block));
+    next_block->prev_block_offset = to_offset(reinterpret_cast<uint8_t *>(block));
   }
 
-  block->prev_block = NULL_OFFSET;
-  block->next_block = list_head;
+  block->prev_block_offset = NULL_OFFSET;
+  block->next_block_offset = list_head;
 
   list_head = to_offset(reinterpret_cast<uint8_t *>(block));
 }
@@ -167,7 +176,7 @@ FileBackedBuffer::const_iterator FileBackedBuffer::const_iterator::operator++()
 {
   if (m_offset != NULL_OFFSET) {
     Block * block = reinterpret_cast<Block *>(m_parent->to_pointer(m_offset));
-    m_offset = block->next_block;
+    m_offset = block->next_block_offset;
   }
   return *this;
 }
@@ -176,7 +185,7 @@ FileBackedBuffer::const_iterator FileBackedBuffer::const_iterator::operator--()
 {
   if (m_offset != NULL_OFFSET) {
     Block * block = reinterpret_cast<Block *>(m_parent->to_pointer(m_offset));
-    m_offset = block->prev_block;
+    m_offset = block->prev_block_offset;
   }
   return *this;
 }
@@ -236,4 +245,80 @@ void FileBackedBuffer::print_stats() const
             << "average free block (bytes): " << average_free_block_size << '\n'
             << "free space fragmentation: " << fragmentation << '\n'
             << '\n';
+}
+
+bool FileBackedBuffer::dump_usage(const std::string & filename) const
+{
+  constexpr int NUM_BYTES_PER_PIXEL = 4;        // number of bytes in db buffer represented by one pixel in diagram
+  constexpr int MAX_DIAGRAM_DIMENSION = 12000;  // output diagram should be no bigger than 8000 px by 8000 px
+
+  std::unique_lock<std::mutex> read_lock(m_mutex);
+
+  float num_pixels = std::ceil(static_cast<float>(m_db_size) / static_cast<float>(NUM_BYTES_PER_PIXEL));
+  float diagram_dimension_px = std::ceil(std::sqrt(num_pixels));
+  if (diagram_dimension_px > MAX_DIAGRAM_DIMENSION) {
+    std::cerr << "[ERROR] buffer size " << m_db_size << " bytes is too big for dumping usage diagram\n";
+    return false;
+  }
+
+  constexpr unsigned int NUM_CHANNELS = 3;
+  constexpr uint8_t RGB_OVERHEAD[NUM_CHANNELS] = {0x90, 0xD5, 0xFF};
+  constexpr uint8_t RGB_DATA[NUM_CHANNELS] = {0x2E, 0x6F, 0x40};
+  constexpr uint8_t RGB_UNUSED[NUM_CHANNELS] = {0x00, 0x00, 0x00};
+
+  int num_cols = static_cast<int>(diagram_dimension_px);
+  int num_rows = static_cast<int>(std::ceil(num_pixels / num_cols));
+  std::vector<uint8_t> diagram_image(NUM_CHANNELS * num_rows * num_cols, 0xCC);
+
+  // account for header
+  for (unsigned int i = 0; i < sizeof(BufferHeader) / NUM_BYTES_PER_PIXEL; ++i) {
+    diagram_image[i * NUM_CHANNELS + 0] = RGB_OVERHEAD[0];
+    diagram_image[i * NUM_CHANNELS + 1] = RGB_OVERHEAD[1];
+    diagram_image[i * NUM_CHANNELS + 2] = RGB_OVERHEAD[2];
+  }
+
+  // account for free blocks
+  FileByteOffset curr_free_block_offset = m_header->next_free_block_offset;
+  while (curr_free_block_offset != NULL_OFFSET) {
+    unsigned int pixel_offset = curr_free_block_offset / NUM_BYTES_PER_PIXEL;
+    for (unsigned int i = 0; i < sizeof(Block) / NUM_BYTES_PER_PIXEL; ++i) {
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 0] = RGB_OVERHEAD[0];
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 1] = RGB_OVERHEAD[1];
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 2] = RGB_OVERHEAD[2];
+    }
+
+    pixel_offset = (curr_free_block_offset + sizeof(Block)) / NUM_BYTES_PER_PIXEL;
+    const Block * curr_block = reinterpret_cast<Block *>(to_pointer(curr_free_block_offset));
+    for (unsigned int i = 0; i < curr_block->data_size / NUM_BYTES_PER_PIXEL; ++i) {
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 0] = RGB_UNUSED[0];
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 1] = RGB_UNUSED[1];
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 2] = RGB_UNUSED[2];
+    }
+
+    curr_free_block_offset = curr_block->next_block_offset;
+  }
+
+  // account for used blocks
+  FileByteOffset curr_allocated_block_offset = m_header->next_allocated_block_offset;
+  while (curr_allocated_block_offset != NULL_OFFSET) {
+    unsigned int pixel_offset = curr_allocated_block_offset / NUM_BYTES_PER_PIXEL;
+    for (unsigned int i = 0; i < sizeof(Block) / NUM_BYTES_PER_PIXEL; ++i) {
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 0] = RGB_OVERHEAD[0];
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 1] = RGB_OVERHEAD[1];
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 2] = RGB_OVERHEAD[2];
+    }
+
+    pixel_offset = (curr_allocated_block_offset + sizeof(Block)) / NUM_BYTES_PER_PIXEL;
+    const Block * curr_block = reinterpret_cast<Block *>(to_pointer(curr_allocated_block_offset));
+    for (unsigned int i = 0; i < curr_block->data_size / NUM_BYTES_PER_PIXEL; ++i) {
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 0] = RGB_DATA[0];
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 1] = RGB_DATA[1];
+      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 2] = RGB_DATA[2];
+    }
+
+    curr_allocated_block_offset = curr_block->next_block_offset;
+  }
+
+  fpng::fpng_init();
+  return fpng::fpng_encode_image_to_file(filename.c_str(), diagram_image.data(), num_cols, num_rows, NUM_CHANNELS);
 }

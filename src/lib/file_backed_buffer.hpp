@@ -40,25 +40,26 @@ public:
     FileByteOffset m_offset;
   };
 
-  const_iterator begin_allocated() const { return const_iterator(this, m_header->next_allocated_block); }
+  const_iterator begin_allocated() const { return const_iterator(this, m_header->next_allocated_block_offset); }
   const_iterator end_allocated() const { return const_iterator(this, NULL_OFFSET); }
 
-  const_iterator begin_free() const { return const_iterator(this, m_header->next_free_block); }
+  const_iterator begin_free() const { return const_iterator(this, m_header->next_free_block_offset); }
   const_iterator end_free() const { return const_iterator(this, NULL_OFFSET); }
 
   void print_stats() const;
+  bool dump_usage(const std::string & filename) const;
 
 private:
   struct BufferHeader {
-    FileByteOffset next_free_block;
-    FileByteOffset next_allocated_block;
+    FileByteOffset next_free_block_offset;
+    FileByteOffset next_allocated_block_offset;
   };
 
   // buffer is split into allocated blocks, tracked by intrusive linked list
   // the tracking of each block has overhead (members other than data)
   struct Block {
-    FileByteOffset prev_block;
-    FileByteOffset next_block;
+    FileByteOffset prev_block_offset;
+    FileByteOffset next_block_offset;
     size_t data_size;
     uint8_t data[];
   };
@@ -66,16 +67,16 @@ private:
   uint8_t * to_pointer(const FileByteOffset offset) const { return m_base + offset; }
   FileByteOffset to_offset(const uint8_t * pointer) const { return pointer - m_base; }
 
-  FileByteOffset & free_list() { return m_header->next_free_block; }
-  FileByteOffset & allocated_list() { return m_header->next_allocated_block; }
+  FileByteOffset & free_list() { return m_header->next_free_block_offset; }
+  FileByteOffset & allocated_list() { return m_header->next_allocated_block_offset; }
 
   void remove_block_from_list(FileByteOffset & list_head, Block * block);
   void insert_block_to_list(FileByteOffset & list_head, Block * block);
 
   int m_fd;
-  int m_db_size;
+  int m_db_size;  // size of buffer in bytes
   uint8_t * m_base;
-  std::mutex m_mutex;
+  mutable std::mutex m_mutex;
   BufferHeader * m_header;
 };
 

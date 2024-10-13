@@ -20,7 +20,8 @@
 // hash table can technically keep accepting new keys indefinitely, so the hash table has less need to resize
 class ConcurrentHashTable
 {
-  class BufferFreer {
+  class BufferFreer
+  {
   public:
     BufferFreer(ConcurrentHashTable * parent) : m_parent(parent) {}
 
@@ -35,8 +36,12 @@ class ConcurrentHashTable
   public:
     KeyValuePair() {}
 
-    void set(uint8_t * data_buffer, BufferFreer deleter, const std::string & key, const std::string & value);
-    void set(const char * key_value_data, BufferFreer deleter);
+    // overwrite contents in key_value_data with key and value
+    void set(char * key_value_data, BufferFreer deleter, const std::string & key, const std::string & value);
+
+    // don't overwrite contents in key_value_data, key and value already preside there
+    void set(char * key_value_data, BufferFreer deleter);
+
     std::pair<std::shared_ptr<const char>, const char *> get() const;
 
   private:
@@ -45,13 +50,13 @@ class ConcurrentHashTable
     // resolved with atomic load/store of this pointer. this also meets the strongly consistent requirement
     // writer-writer contention does not occur because second writer is locked out
     // at the beginning of put()
-    std::shared_ptr<const char> m_key_value_data;
+    std::shared_ptr<const char> m_key_value_data; // <key> + '\0' + <value> + '\0'
   };
 
   struct Bucket {
     Bucket() : next_bucket(nullptr) {}
     Bucket * next_bucket;
-    KeyValuePair data;
+    KeyValuePair key_value_pair;
   };
 
 public:
@@ -84,6 +89,7 @@ public:
   const_iterator end() const { return m_bucket_storage.cend(); }
 
   void print_stats() const;
+  bool dump_buffer_usage(const std::string & filename) const { return m_buffer.dump_usage(filename); }
 
 private:
   std::pair<Bucket *, size_t> find_bucket_with_key(const std::string & key) const;

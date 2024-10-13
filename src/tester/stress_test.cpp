@@ -42,11 +42,14 @@ std::string generate_random_value(std::mt19937 & generator)
 }
 
 void stress_test(ConcurrentHashTable * hash_table,
+                 const int id,
                  const std::chrono::time_point<std::chrono::steady_clock> start_time,
                  size_t & num_read_operations,
                  size_t & num_successful_write_operations,
                  size_t & num_failed_write_operations)
 {
+  std::cout << "Starting stressor #" << id << '\n';
+
   std::mt19937 generator;
   std::uniform_int_distribution<int> read_write(0, 1);
 
@@ -86,6 +89,16 @@ int main(const int argc, const char * argv[])
   // }
   // std::cout << "end key-value pairs\n";
 
+  std::cout << "[TEST] Dumping buffer usage\n";
+  bool success = hash_table->dump_buffer_usage("before_test.png");
+  if (success) {
+    std::cout << "[TEST] Dumped buffer usage successfully\n";
+  } else {
+    std::cout << "[TEST] Dumping buffer usage failed\n";
+  }
+
+  std::cout << "\nRunning test for " << RUN_TIME.count() << " seconds...\n\n";
+
   std::vector<std::thread> threads; threads.reserve(NUM_THREADS);
   std::vector<size_t> num_read_operations(NUM_THREADS);
   std::vector<size_t> num_successful_write_operations(NUM_THREADS);
@@ -94,6 +107,7 @@ int main(const int argc, const char * argv[])
   for (int i = 0; i < NUM_THREADS; ++i) {
     threads.emplace_back(stress_test,
                          hash_table,
+                         i + 1,
                          start_time,
                          std::ref(num_read_operations[i]),
                          std::ref(num_successful_write_operations[i]),
@@ -114,8 +128,15 @@ int main(const int argc, const char * argv[])
             << "write: " << total_failed_write_operations << " (failed due to memory allocation and fragmentation)\n"
             << "total: " << total_read_operations + total_successful_write_operations << " (successful)\n"
             << '\n';
-
   hash_table->print_stats();
+
+  std::cout << "[TEST] Dumping buffer usage\n";
+  success = hash_table->dump_buffer_usage("after_test.png");
+  if (success) {
+    std::cout << "[TEST] Dumped buffer usage successfully\n";
+  } else {
+    std::cout << "[TEST] Dumping buffer usage failed\n";
+  }
 
   // std::cout << "\nkey-value pairs in hash table after stress test:\n";
   // for (auto iter = hash_table->begin(); iter != hash_table->end(); ++iter) {
