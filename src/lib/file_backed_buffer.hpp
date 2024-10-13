@@ -40,8 +40,8 @@ public:
     FileByteOffset m_offset;
   };
 
-  const_iterator begin_allocated() const { return const_iterator(this, m_header->next_allocated_block_offset); }
-  const_iterator end_allocated() const { return const_iterator(this, NULL_OFFSET); }
+  const_iterator begin_used() const { return const_iterator(this, m_header->next_used_block_offset); }
+  const_iterator end_used() const { return const_iterator(this, NULL_OFFSET); }
 
   const_iterator begin_free() const { return const_iterator(this, m_header->next_free_block_offset); }
   const_iterator end_free() const { return const_iterator(this, NULL_OFFSET); }
@@ -52,10 +52,10 @@ public:
 private:
   struct BufferHeader {
     FileByteOffset next_free_block_offset;
-    FileByteOffset next_allocated_block_offset;
+    FileByteOffset next_used_block_offset;
   };
 
-  // buffer is split into allocated blocks, tracked by intrusive linked list
+  // buffer is split into used blocks, tracked by intrusive linked list
   // the tracking of each block has overhead (members other than data)
   struct Block {
     FileByteOffset prev_block_offset;
@@ -68,7 +68,7 @@ private:
   FileByteOffset to_offset(const uint8_t * pointer) const { return pointer - m_base; }
 
   FileByteOffset & free_list() { return m_header->next_free_block_offset; }
-  FileByteOffset & allocated_list() { return m_header->next_allocated_block_offset; }
+  FileByteOffset & used_list() { return m_header->next_used_block_offset; }
 
   void remove_block_from_list(FileByteOffset & list_head, Block * block);
   void insert_block_to_list(FileByteOffset & list_head, Block * block);

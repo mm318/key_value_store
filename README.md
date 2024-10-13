@@ -6,7 +6,7 @@
 This is an example implementation of a key-value store.
 
 Features:
-- Concurrency, uses atomics and memory fences for reads, and uses mutexes for writes
+- Concurrent, uses atomics and memory fences for reads, and uses mutexes for writes
 - Strongly consistent, writes take effect as immediately as possible
 - Persistent, the store is backed by an `mmap()`'d file
 

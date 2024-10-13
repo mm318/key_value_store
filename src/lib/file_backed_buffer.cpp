@@ -66,7 +66,7 @@ FileBackedBuffer::FileBackedBuffer(const char * filename, const size_t buffer_si
   if (m_header != nullptr && new_file) {
     std::cout << "[INFO] initializing buffer file contents\n";
     m_header->next_free_block_offset = sizeof(BufferHeader);
-    m_header->next_allocated_block_offset = NULL_OFFSET;
+    m_header->next_used_block_offset = NULL_OFFSET;
 
     Block * new_block = reinterpret_cast<Block *>(to_pointer(m_header->next_free_block_offset));
     new_block->data_size = m_db_size - sizeof(BufferHeader) - sizeof(Block);
@@ -106,7 +106,7 @@ uint8_t * FileBackedBuffer::alloc(const size_t alloc_size)
         curr_block->data_size = alloc_size;
       }
 
-      insert_block_to_list(allocated_list(), curr_block);
+      insert_block_to_list(used_list(), curr_block);
 
       result = curr_block->data;
       // *result = '\0'; // perform a non-comprehensive but cheap data reset
@@ -128,7 +128,7 @@ void FileBackedBuffer::free(const uint8_t * pointer)
 {
   std::unique_lock<std::mutex> write_lock(m_mutex);
   Block * block = const_cast<Block *>(reinterpret_cast<const Block *>(pointer - sizeof(Block)));
-  remove_block_from_list(allocated_list(), block);
+  remove_block_from_list(used_list(), block);
   insert_block_to_list(free_list(), block);
 }
 
@@ -192,24 +192,26 @@ FileBackedBuffer::const_iterator FileBackedBuffer::const_iterator::operator--()
 
 void FileBackedBuffer::print_stats() const
 {
-  size_t num_allocated_blocks = 0;
-  size_t smallest_allocated_block_size = std::numeric_limits<size_t>::max();
-  size_t largest_allocated_block_size = 0;
-  size_t total_allocated_block_size = 0;
-  for (auto iter = begin_allocated(); iter != end_allocated(); ++iter) {
+  // calculate stats for used blocks
+  size_t num_used_blocks = 0;
+  size_t smallest_used_block_size = std::numeric_limits<size_t>::max();
+  size_t largest_used_block_size = 0;
+  size_t total_used_block_size = 0;
+  for (auto iter = begin_used(); iter != end_used(); ++iter) {
     const std::pair<uint8_t *, size_t> data = *iter;
     const size_t block_size = data.second + sizeof(Block);
-    if (block_size < smallest_allocated_block_size) {
-      smallest_allocated_block_size = block_size;
+    if (block_size < smallest_used_block_size) {
+      smallest_used_block_size = block_size;
     }
-    if (block_size > largest_allocated_block_size) {
-      largest_allocated_block_size = block_size;
+    if (block_size > largest_used_block_size) {
+      largest_used_block_size = block_size;
     }
-    total_allocated_block_size += block_size;
-    ++num_allocated_blocks;
+    total_used_block_size += block_size;
+    ++num_used_blocks;
   }
-  float average_allocated_block_size = static_cast<float>(total_allocated_block_size) / num_allocated_blocks;
+  float average_used_block_size = static_cast<float>(total_used_block_size) / num_used_blocks;
 
+  // calculate stats for free blocks
   size_t num_free_blocks = 0;
   size_t smallest_free_block_size = std::numeric_limits<size_t>::max();
   size_t largest_free_block_size = 0;
@@ -227,23 +229,25 @@ void FileBackedBuffer::print_stats() const
     ++num_free_blocks;
   }
   float average_free_block_size = static_cast<float>(total_free_block_size) / num_free_blocks;
+
+  // calculate fragmentation (based on https://stackoverflow.com/a/4587077)
   float fragmentation = 0.0f;
   if (total_free_block_size != 0) {
     fragmentation = static_cast<float>(total_free_block_size - largest_free_block_size) / total_free_block_size;
   }
 
   std::cout << "file buffer stats:\n"
-            << "allocated blocks: " << num_allocated_blocks << '\n'
-            << "smallest allocated block (bytes): " << smallest_allocated_block_size << '\n'
-            << "largest allocated block (bytes): " << largest_allocated_block_size << '\n'
-            << "total allocated block (bytes): " << total_allocated_block_size << '\n'
-            << "average allocated block (bytes): " << average_allocated_block_size << '\n'
-            << "free blocks: " << num_free_blocks << '\n'
-            << "smallest free block (bytes): " << smallest_free_block_size << '\n'
-            << "largest free block (bytes): " << largest_free_block_size << '\n'
-            << "total free block (bytes): " << total_free_block_size << '\n'
-            << "average free block (bytes): " << average_free_block_size << '\n'
-            << "free space fragmentation: " << fragmentation << '\n'
+            << "  used blocks: " << num_used_blocks << '\n'
+            << "    smallest used block size (bytes): " << smallest_used_block_size << '\n'
+            << "    largest used block size (bytes): " << largest_used_block_size << '\n'
+            << "    total used block size (bytes): " << total_used_block_size << '\n'
+            << "    average used block size (bytes): " << average_used_block_size << '\n'
+            << "  free blocks: " << num_free_blocks << '\n'
+            << "    smallest free block size (bytes): " << smallest_free_block_size << '\n'
+            << "    largest free block size (bytes): " << largest_free_block_size << '\n'
+            << "    total free block size (bytes): " << total_free_block_size << '\n'
+            << "    average free block size (bytes): " << average_free_block_size << '\n'
+            << "  free space fragmentation: " << fragmentation << '\n'
             << '\n';
 }
 
@@ -299,24 +303,24 @@ bool FileBackedBuffer::dump_usage(const std::string & filename) const
   }
 
   // account for used blocks
-  FileByteOffset curr_allocated_block_offset = m_header->next_allocated_block_offset;
-  while (curr_allocated_block_offset != NULL_OFFSET) {
-    unsigned int pixel_offset = curr_allocated_block_offset / NUM_BYTES_PER_PIXEL;
+  FileByteOffset curr_used_block_offset = m_header->next_used_block_offset;
+  while (curr_used_block_offset != NULL_OFFSET) {
+    unsigned int pixel_offset = curr_used_block_offset / NUM_BYTES_PER_PIXEL;
     for (unsigned int i = 0; i < sizeof(Block) / NUM_BYTES_PER_PIXEL; ++i) {
       diagram_image[(pixel_offset + i) * NUM_CHANNELS + 0] = RGB_OVERHEAD[0];
       diagram_image[(pixel_offset + i) * NUM_CHANNELS + 1] = RGB_OVERHEAD[1];
       diagram_image[(pixel_offset + i) * NUM_CHANNELS + 2] = RGB_OVERHEAD[2];
     }
 
-    pixel_offset = (curr_allocated_block_offset + sizeof(Block)) / NUM_BYTES_PER_PIXEL;
-    const Block * curr_block = reinterpret_cast<Block *>(to_pointer(curr_allocated_block_offset));
+    pixel_offset = (curr_used_block_offset + sizeof(Block)) / NUM_BYTES_PER_PIXEL;
+    const Block * curr_block = reinterpret_cast<Block *>(to_pointer(curr_used_block_offset));
     for (unsigned int i = 0; i < curr_block->data_size / NUM_BYTES_PER_PIXEL; ++i) {
       diagram_image[(pixel_offset + i) * NUM_CHANNELS + 0] = RGB_DATA[0];
       diagram_image[(pixel_offset + i) * NUM_CHANNELS + 1] = RGB_DATA[1];
       diagram_image[(pixel_offset + i) * NUM_CHANNELS + 2] = RGB_DATA[2];
     }
 
-    curr_allocated_block_offset = curr_block->next_block_offset;
+    curr_used_block_offset = curr_block->next_block_offset;
   }
 
   fpng::fpng_init();

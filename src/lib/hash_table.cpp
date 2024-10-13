@@ -14,8 +14,8 @@ constexpr std::hash<std::string> ConcurrentHashTable::hasher;
 
 ConcurrentHashTable::ConcurrentHashTable() : m_buffer(BUFFER_FILENAME, BUFFER_SIZE), m_hash_table(HASH_TABLE_SIZE)
 {
-  // load what's already in the buffer
-  for (auto iter = m_buffer.begin_allocated(); iter != m_buffer.end_allocated(); ++iter) {
+  // load what's already in the on-disk buffer
+  for (auto iter = m_buffer.begin_used(); iter != m_buffer.end_used(); ++iter) {
     const std::pair<uint8_t *, size_t> data = *iter;
 
     Bucket * new_bucket = get_new_bucket();
@@ -31,6 +31,8 @@ bool ConcurrentHashTable::put(const std::string & key, const std::string & value
 {
   std::unique_lock<std::mutex> write_lock(m_write_mutex);
 
+  // here we choose to always allocate a new block of data, even if the key already exists
+  // if we went with reusing existing block, then there would need to be a mutex locking scheme for all reads
   const size_t allocation_size = key.length() + 1 + value.length() + 1;
   uint8_t * data_buffer = m_buffer.alloc(allocation_size);
   if (data_buffer == nullptr) {
@@ -167,12 +169,12 @@ void ConcurrentHashTable::print_stats() const
   float load_factor = static_cast<float>(num_table_elements) / m_hash_table.size();
 
   std::cout << "hash table stats:\n"
-            << "key-value pairs: " << num_key_value_pairs << '\n'
-            << "elements in table: " << num_table_elements << '\n'
-            << "load factor: " << load_factor << '\n'
-            << "smallest value size (bytes): " << smallest_value_size << '\n'
-            << "largest value size (bytes): " << largest_value_size << '\n'
-            << "average value size (bytes): " << average_value_size << '\n'
+            << "  key-value pairs: " << num_key_value_pairs << '\n'
+            << "  elements in table: " << num_table_elements << '\n'
+            << "  load factor: " << load_factor << '\n'
+            << "  smallest value size (bytes): " << smallest_value_size << '\n'
+            << "  largest value size (bytes): " << largest_value_size << '\n'
+            << "  average value size (bytes): " << average_value_size << '\n'
             << '\n';
 
   m_buffer.print_stats();

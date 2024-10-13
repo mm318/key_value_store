@@ -15,7 +15,7 @@ void memfill(uint8_t * buffer, const size_t buffer_size, const uint32_t pattern_
     uint8_t byte[sizeof(data)];
   } pattern = {.data = pattern_data};
 
-  for (int i = 0; i < buffer_size; ++i) {
+  for (unsigned int i = 0; i < buffer_size; ++i) {
     buffer[i] = pattern.byte[sizeof(pattern) - (i % sizeof(pattern)) - 1];
   }
 }
@@ -39,11 +39,11 @@ void test_buffer(const char * buffer_filename)
 
   buffer.free(alloc4);
 
-  std::cout << "allocated data:\n";
-  for (auto iter = buffer.begin_allocated(); iter != buffer.end_allocated(); ++iter) {
+  std::cout << "used data:\n";
+  for (auto iter = buffer.begin_used(); iter != buffer.end_used(); ++iter) {
     const std::pair<uint8_t *, size_t> data = *iter;
     std::cout << static_cast<void *>(data.first) << ": " << std::hex;
-    for (int j = 0; j < data.second; ++j) {
+    for (unsigned int j = 0; j < data.second; ++j) {
       std::cout << std::setfill('0') << std::setw(2) << std::right << static_cast<int>(data.first[j]);
     }
     std::cout << std::dec << '\n';
