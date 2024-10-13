@@ -23,8 +23,10 @@ pub fn build(b: *std.Build) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardOptimizeOption(.{});
 
+    const fpng = b.dependency("fpng", .{});
+
     // Build and install the main library
-    const lib = buildLib(b, target, mode);
+    const lib = buildLib(b, fpng, target, mode);
 
     // Build and install tests of the main library
     buildTests(b, lib, target, mode);
@@ -32,6 +34,7 @@ pub fn build(b: *std.Build) void {
 
 pub fn buildLib(
     b: *std.Build,
+    dep: *std.Build.Dependency,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Step.Compile {
@@ -42,6 +45,8 @@ pub fn buildLib(
     });
     lib.addCSourceFiles(.{ .files = &lib_sources, .flags = &cpp_flags });
     lib.addIncludePath(b.path("src/lib/"));
+    lib.addIncludePath(dep.path("src/"));
+    lib.linkLibrary(dep.artifact("fpng"));
     lib.linkLibC();
     lib.linkLibCpp();
     b.installArtifact(lib);
@@ -59,7 +64,7 @@ pub fn buildTests(
         .target = target,
         .optimize = optimize,
     });
-    basic_test.addCSourceFile(.{ .file = b.path("src/tester/basic_test.cpp") });
+    basic_test.addCSourceFile(.{ .file = b.path("src/tester/basic_test.cpp"), .flags = &cpp_flags });
     basic_test.addIncludePath(b.path("src/lib/"));
     basic_test.linkLibrary(dep);
     b.installArtifact(basic_test);
@@ -70,7 +75,7 @@ pub fn buildTests(
         .target = target,
         .optimize = optimize,
     });
-    stress_test.addCSourceFile(.{ .file = b.path("src/tester/stress_test.cpp") });
+    stress_test.addCSourceFile(.{ .file = b.path("src/tester/stress_test.cpp"), .flags = &cpp_flags });
     stress_test.addIncludePath(b.path("src/lib/"));
     stress_test.linkLibrary(dep);
     b.installArtifact(stress_test);
