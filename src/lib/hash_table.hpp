@@ -20,40 +20,6 @@
 // hash table can technically keep accepting new keys indefinitely, so the hash table has less need to resize
 class ConcurrentHashTable
 {
-  struct Bucket;
-
-public:
-  static constexpr char BUFFER_FILENAME[] = "kvstore.bin";
-
-  ConcurrentHashTable();
-
-  // basic functionality requirements: put() and get()
-  bool put(const std::string & key, const std::string & value);
-  std::string get(const std::string & key); // returns empty string if key is not found
-
-  class const_iterator
-  {
-  public:
-    const_iterator(std::deque<Bucket>::const_iterator iter) : m_iter(iter) {}
-
-    std::pair<std::string, std::string> operator*();
-
-    const_iterator operator++();
-    const_iterator operator--();
-
-    bool operator==(const const_iterator & other) const { return other.m_iter == m_iter; }
-    bool operator!=(const const_iterator & other) const { return other.m_iter != m_iter; }
-
-  private:
-    std::deque<Bucket>::const_iterator m_iter;
-  };
-
-  const_iterator begin() const { return m_bucket_storage.cbegin(); }
-  const_iterator end() const { return m_bucket_storage.cend(); }
-
-  void print_stats() const;
-
-private:
   class BufferFreer {
   public:
     BufferFreer(ConcurrentHashTable * parent) : m_parent(parent) {}
@@ -88,6 +54,38 @@ private:
     KeyValuePair data;
   };
 
+public:
+  static constexpr char BUFFER_FILENAME[] = "kvstore.bin";
+
+  ConcurrentHashTable();
+
+  // basic functionality requirements: put() and get()
+  bool put(const std::string & key, const std::string & value);
+  std::string get(const std::string & key); // returns empty string if key is not found
+
+  class const_iterator
+  {
+  public:
+    const_iterator(std::deque<Bucket>::const_iterator iter) : m_iter(iter) {}
+
+    std::pair<std::string, std::string> operator*();
+
+    const_iterator operator++();
+    const_iterator operator--();
+
+    bool operator==(const const_iterator & other) const { return other.m_iter == m_iter; }
+    bool operator!=(const const_iterator & other) const { return other.m_iter != m_iter; }
+
+  private:
+    std::deque<Bucket>::const_iterator m_iter;
+  };
+
+  const_iterator begin() const { return m_bucket_storage.cbegin(); }
+  const_iterator end() const { return m_bucket_storage.cend(); }
+
+  void print_stats() const;
+
+private:
   std::pair<Bucket *, size_t> find_bucket_with_key(const std::string & key) const;
   Bucket * get_new_bucket();
   void store_bucket(Bucket * bucket, const size_t hash_table_index);

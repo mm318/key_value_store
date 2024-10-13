@@ -13,26 +13,26 @@ Features:
 
 ## Build
 
-Requires CMake, a C++14 compiler, and a generally POSIX-compliant operating system
+Requires zig and a generally POSIX-compliant operating system
 ```
-mkdir <build dir>
-cd <build dir>
-cmake -DCMAKE_BUILD_TYPE=Release <path to "key_value_store" root dir>
-make
+cd <"key_value_store" root dir>
+zig build
 ```
-(Tested on Ubuntu 20.04.)
+(Tested on Ubuntu 20.04 with zig 0.13.0.)
 
 
 ## Run
 
 Basic test, multiple threads writing their names to the same set of keys
 ```
-<build dir>/bin/kv_basic_test
+# from "key_value_store" root dir
+zig-out/bin/kv_basic_test
 ```
 
 Stress test, multiple threads pummeling the key-value store with reads and writes with random values ranging from 8 bytes to 900 kilobytes
 ```
-<build dir>/bin/kv_stress_test
+# from "key_value_store" root dir
+zig build run
 ```
 
 If desired, reset the persistent state by deleting the generated `kvstore.bin` file in the present working directory.
