@@ -11,6 +11,7 @@ const cpp_flags = [_][]const u8{
 const lib_sources = [_][]const u8{
     "src/lib/hash_table.cpp",
     "src/lib/file_backed_buffer.cpp",
+    "src/lib/file_backed_buffer_diagrammer.cpp",
 };
 
 pub fn build(b: *std.Build) void {

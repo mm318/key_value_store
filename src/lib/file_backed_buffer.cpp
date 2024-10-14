@@ -8,10 +8,8 @@
 #include <errno.h>
 #include <cassert>
 #include <limits>
-#include <cmath>
 
 #include "file_backed_buffer.hpp"
-#include "fpng.h"
 
 
 static int get_file_size(int fd)
@@ -325,80 +323,4 @@ void FileBackedBuffer::print_stats() const
             << "    average free block size (bytes): " << average_free_block_size << '\n'
             << "  free space fragmentation: " << fragmentation << '\n'
             << '\n';
-}
-
-bool FileBackedBuffer::dump_usage(const std::string & filename) const
-{
-  constexpr int NUM_BYTES_PER_PIXEL = 4;        // number of bytes in db buffer represented by one pixel in diagram
-  constexpr int MAX_DIAGRAM_DIMENSION = 12000;  // output diagram should be no bigger than 8000 px by 8000 px
-
-  std::unique_lock<std::mutex> read_lock(m_mutex);
-
-  float num_pixels = std::ceil(static_cast<float>(m_db_size) / static_cast<float>(NUM_BYTES_PER_PIXEL));
-  float diagram_dimension_px = std::ceil(std::sqrt(num_pixels));
-  if (diagram_dimension_px > MAX_DIAGRAM_DIMENSION) {
-    std::cerr << "[ERROR] buffer size " << m_db_size << " bytes is too big for dumping usage diagram\n";
-    return false;
-  }
-
-  constexpr unsigned int NUM_CHANNELS = 3;
-  constexpr uint8_t RGB_OVERHEAD[NUM_CHANNELS] = {0x90, 0xD5, 0xFF};
-  constexpr uint8_t RGB_DATA[NUM_CHANNELS] = {0x2E, 0x6F, 0x40};
-  constexpr uint8_t RGB_UNUSED[NUM_CHANNELS] = {0x00, 0x00, 0x00};
-
-  int num_cols = static_cast<int>(diagram_dimension_px);
-  int num_rows = static_cast<int>(std::ceil(num_pixels / num_cols));
-  std::vector<uint8_t> diagram_image(NUM_CHANNELS * num_rows * num_cols, 0xCC);
-
-  // account for header
-  for (unsigned int i = 0; i < sizeof(BufferHeader) / NUM_BYTES_PER_PIXEL; ++i) {
-    diagram_image[i * NUM_CHANNELS + 0] = RGB_OVERHEAD[0];
-    diagram_image[i * NUM_CHANNELS + 1] = RGB_OVERHEAD[1];
-    diagram_image[i * NUM_CHANNELS + 2] = RGB_OVERHEAD[2];
-  }
-
-  // account for free blocks
-  FileByteOffset curr_free_block_offset = m_header->next_free_block_offset;
-  while (curr_free_block_offset != NULL_OFFSET) {
-    unsigned int pixel_offset = curr_free_block_offset / NUM_BYTES_PER_PIXEL;
-    for (unsigned int i = 0; i < sizeof(Block) / NUM_BYTES_PER_PIXEL; ++i) {
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 0] = RGB_OVERHEAD[0];
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 1] = RGB_OVERHEAD[1];
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 2] = RGB_OVERHEAD[2];
-    }
-
-    pixel_offset = (curr_free_block_offset + sizeof(Block)) / NUM_BYTES_PER_PIXEL;
-    const Block * curr_block = reinterpret_cast<Block *>(to_pointer(curr_free_block_offset));
-    for (unsigned int i = 0; i < curr_block->data_size / NUM_BYTES_PER_PIXEL; ++i) {
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 0] = RGB_UNUSED[0];
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 1] = RGB_UNUSED[1];
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 2] = RGB_UNUSED[2];
-    }
-
-    curr_free_block_offset = curr_block->next_block_offset;
-  }
-
-  // account for used blocks
-  FileByteOffset curr_used_block_offset = m_header->next_used_block_offset;
-  while (curr_used_block_offset != NULL_OFFSET) {
-    unsigned int pixel_offset = curr_used_block_offset / NUM_BYTES_PER_PIXEL;
-    for (unsigned int i = 0; i < sizeof(Block) / NUM_BYTES_PER_PIXEL; ++i) {
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 0] = RGB_OVERHEAD[0];
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 1] = RGB_OVERHEAD[1];
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 2] = RGB_OVERHEAD[2];
-    }
-
-    pixel_offset = (curr_used_block_offset + sizeof(Block)) / NUM_BYTES_PER_PIXEL;
-    const Block * curr_block = reinterpret_cast<Block *>(to_pointer(curr_used_block_offset));
-    for (unsigned int i = 0; i < curr_block->data_size / NUM_BYTES_PER_PIXEL; ++i) {
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 0] = RGB_DATA[0];
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 1] = RGB_DATA[1];
-      diagram_image[(pixel_offset + i) * NUM_CHANNELS + 2] = RGB_DATA[2];
-    }
-
-    curr_used_block_offset = curr_block->next_block_offset;
-  }
-
-  fpng::fpng_init();
-  return fpng::fpng_encode_image_to_file(filename.c_str(), diagram_image.data(), num_cols, num_rows, NUM_CHANNELS);
 }
