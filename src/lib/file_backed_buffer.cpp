@@ -65,10 +65,10 @@ FileBackedBuffer::FileBackedBuffer(const char * filename, const size_t buffer_si
   m_header = reinterpret_cast<BufferHeader *>(m_base);
   if (m_header != nullptr && new_file) {
     std::cout << "[INFO] initializing buffer file contents\n";
-    m_header->next_free_block_offset = sizeof(BufferHeader);
-    m_header->next_used_block_offset = NULL_OFFSET;
+    free_list() = sizeof(BufferHeader);
+    used_list() = NULL_OFFSET;
 
-    Block * new_block = reinterpret_cast<Block *>(to_pointer(m_header->next_free_block_offset));
+    Block * new_block = reinterpret_cast<Block *>(to_pointer(free_list()));
     new_block->data_size = m_db_size - sizeof(BufferHeader) - sizeof(Block);
     new_block->prev_block_offset = NULL_OFFSET;
     new_block->next_block_offset = NULL_OFFSET;
@@ -91,7 +91,7 @@ uint8_t * FileBackedBuffer::alloc(const size_t alloc_size)
 
   uint8_t * result = nullptr;
 
-  FileByteOffset curr_free_block_offset = m_header->next_free_block_offset;
+  FileByteOffset curr_free_block_offset = free_list();
   while (curr_free_block_offset != NULL_OFFSET) {
     Block * curr_block = reinterpret_cast<Block *>(to_pointer(curr_free_block_offset));
     if (curr_block->data_size >= alloc_size) {
@@ -102,11 +102,11 @@ uint8_t * FileBackedBuffer::alloc(const size_t alloc_size)
       if (curr_block->data_size >= alloc_size + sizeof(Block) + 100) {
         Block * split_block = reinterpret_cast<Block *>(curr_block->data + alloc_size);
         split_block->data_size = curr_block->data_size - alloc_size - sizeof(Block);
-        insert_block_to_list(free_list(), split_block);
+        insert_block_to_free_list(split_block);
         curr_block->data_size = alloc_size;
       }
 
-      insert_block_to_list(used_list(), curr_block);
+      insert_block_to_used_list(curr_block);
 
       result = curr_block->data;
       // *result = '\0'; // perform a non-comprehensive but cheap data reset
@@ -129,7 +129,7 @@ void FileBackedBuffer::free(const uint8_t * pointer)
   std::unique_lock<std::mutex> write_lock(m_mutex);
   Block * block = const_cast<Block *>(reinterpret_cast<const Block *>(pointer - sizeof(Block)));
   remove_block_from_list(used_list(), block);
-  insert_block_to_list(free_list(), block);
+  insert_block_to_free_list(block);
 }
 
 void FileBackedBuffer::remove_block_from_list(FileByteOffset & list_head, Block * curr_block)
@@ -150,17 +150,93 @@ void FileBackedBuffer::remove_block_from_list(FileByteOffset & list_head, Block 
   curr_block->next_block_offset = NULL_OFFSET;
 }
 
-void FileBackedBuffer::insert_block_to_list(FileByteOffset & list_head, Block * block)
+// inserts block at the front of the list
+void FileBackedBuffer::insert_block_to_used_list(Block * block)
 {
-  if (list_head != NULL_OFFSET) {
-    Block * next_block = reinterpret_cast<Block *>(to_pointer(list_head));
-    next_block->prev_block_offset = to_offset(reinterpret_cast<uint8_t *>(block));
+  if (used_list() != NULL_OFFSET) {
+    Block * next_block = reinterpret_cast<Block *>(to_pointer(used_list()));
+    next_block->prev_block_offset = to_offset(block);
   }
 
   block->prev_block_offset = NULL_OFFSET;
-  block->next_block_offset = list_head;
+  block->next_block_offset = used_list();
 
-  list_head = to_offset(reinterpret_cast<uint8_t *>(block));
+  used_list() = to_offset(block);
+}
+
+// inserts block in sorted order
+void FileBackedBuffer::insert_block_to_free_list(Block * block)
+{
+  FileByteOffset block_offset = to_offset(block);
+
+  FileByteOffset curr_free_block_offset = free_list();
+  if (curr_free_block_offset == NULL_OFFSET) {
+    free_list() = block_offset;
+    return;
+  }
+
+  Block * curr_block = nullptr;
+  while (true) {
+    curr_block = reinterpret_cast<Block *>(to_pointer(curr_free_block_offset));
+    if (curr_free_block_offset > block_offset) {
+      break;
+    }
+    if (curr_block->next_block_offset == NULL_OFFSET) {
+      break;
+    }
+
+    curr_free_block_offset = curr_block->next_block_offset;
+  }
+
+  FileByteOffset prev_free_block_offset;
+  FileByteOffset next_free_block_offset;;
+  if (curr_free_block_offset < block_offset) {
+    assert(curr_block->next_block_offset == NULL_OFFSET);
+    prev_free_block_offset = curr_free_block_offset;
+    next_free_block_offset = curr_block->next_block_offset;
+  } else if (curr_free_block_offset > block_offset) {
+    if (!(curr_block->prev_block_offset == NULL_OFFSET || curr_block->prev_block_offset < block_offset)) {
+      std::cerr << "[DEBUG] curr_block->prev_block_offset " << curr_block->prev_block_offset << "\n";
+    }
+    assert(curr_block->prev_block_offset == NULL_OFFSET || curr_block->prev_block_offset < block_offset);
+    prev_free_block_offset = curr_block->prev_block_offset;
+    next_free_block_offset = curr_free_block_offset;
+  } else {
+    std::cerr << "[ERROR] block is already in list!\n";
+    assert(false);
+  }
+  Block * prev_block = (prev_free_block_offset == NULL_OFFSET)
+                       ? nullptr : reinterpret_cast<Block *>(to_pointer(prev_free_block_offset));
+  Block * next_block = (next_free_block_offset == NULL_OFFSET)
+                       ? nullptr : reinterpret_cast<Block *>(to_pointer(next_free_block_offset));;
+
+  block->prev_block_offset = prev_free_block_offset;
+  block->next_block_offset = next_free_block_offset;
+  if (prev_block != nullptr) {
+    prev_block->next_block_offset = block_offset;
+  } else {
+    assert(curr_free_block_offset == free_list());
+    free_list() = block_offset;
+  }
+  if (next_block != nullptr) {
+    next_block->prev_block_offset = block_offset;
+  }
+
+  const bool prev_contiguous = prev_block != nullptr
+                               && (prev_free_block_offset + sizeof(Block) + prev_block->data_size == prev_block->next_block_offset);
+  const bool next_contiguous = next_block != nullptr
+                               && (block_offset + sizeof(Block) + block->data_size == block->next_block_offset);
+  if (prev_contiguous && next_contiguous) {
+    remove_block_from_list(free_list(), block);
+    remove_block_from_list(free_list(), next_block);
+    prev_block->data_size += (sizeof(Block) + block->data_size) + (sizeof(Block) + next_block->data_size);
+  } else if (prev_contiguous) {
+    remove_block_from_list(free_list(), block);
+    prev_block->data_size += (sizeof(Block) + block->data_size);
+  } else if (next_contiguous) {
+    remove_block_from_list(free_list(), next_block);
+    block->data_size += (sizeof(Block) + next_block->data_size);
+  }
 }
 
 std::pair<uint8_t *, size_t> FileBackedBuffer::const_iterator::operator*()

@@ -64,14 +64,15 @@ private:
     uint8_t data[];
   };
 
-  uint8_t * to_pointer(const FileByteOffset offset) const { return m_base + offset; }
-  FileByteOffset to_offset(const uint8_t * pointer) const { return pointer - m_base; }
+  void * to_pointer(const FileByteOffset offset) const { return m_base + offset; }
+  FileByteOffset to_offset(const void * pointer) const { return static_cast<const uint8_t *>(pointer) - m_base; }
 
   FileByteOffset & free_list() { return m_header->next_free_block_offset; }
   FileByteOffset & used_list() { return m_header->next_used_block_offset; }
 
   void remove_block_from_list(FileByteOffset & list_head, Block * block);
-  void insert_block_to_list(FileByteOffset & list_head, Block * block);
+  void insert_block_to_used_list(Block * block);
+  void insert_block_to_free_list(Block * block);  // will perform sorted insert and merges
 
   int m_fd;
   int m_db_size;  // size of buffer in bytes

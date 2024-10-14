@@ -40,7 +40,6 @@ If desired, reset the persistent state by deleting the generated `kvstore.bin` f
 
 ## TODOs
 
-- Improve memory allocation for key-value pairs from file-backed buffer, reduce memory fragmentation
 - Support logging reads and writes
 - Support resizing (growing) key-value storage size
 - Support erasing from key-value store
